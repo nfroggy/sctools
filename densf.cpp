@@ -167,7 +167,7 @@ void DeInterLeave(uint8_t *data) {
                 packetXoff += 27;
             }
 
-            // copy bit #sourceBits to bit packetBits
+            // copy bit #sourceBits to bit #packetBits
             unsigned sourceBits = bitCount + packetXoff;
             if (data[sourceBits >> 3] & (1 << (sourceBits & 7))) {
                 interFrame[packetBits >> 3] |= (1 << (packetBits & 7));
