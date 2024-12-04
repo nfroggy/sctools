@@ -1,5 +1,5 @@
-// densf.cpp: Extracts .sa files from Scientific Atlanta formatted Sega Channel
-// game image files.
+// densf.cpp: Extracts .sa files from a Scientific Atlanta formatted Sega Channel
+// game image file.
 // Author: Nathan Misner
 // I place this file in the public domain.
 

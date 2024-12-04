@@ -1,3 +1,9 @@
+// nsf.c: Encodes a Scientific Atlanta format Sega Channel game image file.
+// Author: Nathan Misner
+// This file is roughly equivalent to the source code to the NSF.EXE utility,
+// which someone at Scientific Atlanta wrote in 1994. I place whatever portion
+// of it belongs to me in the public domain.
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -9,18 +15,21 @@ FILE *logfile;
 
 FILE *pMap;
 
-#define DATA_SIZE 246
+#define NUM_PIPES 10
+#define PACKET_LEN 288
+#define PACKET_DATA_LEN 246
 #define PATH_LEN 36
+
 #pragma pack(push, 1)
 struct PMS {
     uint32_t PMS_number;
-    char FileInName[10][PATH_LEN];
-    uint16_t PAddress[10];
-    uint16_t FileId[10];
-    uint16_t RAddress[10];
-    uint16_t HeaderOffset[10];
-    uint16_t GameTimeWord[10];
-    char ServiceID[10];
+    char FileInName[NUM_PIPES][PATH_LEN];
+    uint16_t PAddress[NUM_PIPES];
+    uint16_t FileId[NUM_PIPES];
+    uint16_t RAddress[NUM_PIPES];
+    uint16_t HeaderOffset[NUM_PIPES];
+    uint16_t GameTimeWord[NUM_PIPES];
+    char ServiceID[NUM_PIPES];
     char PMR_fill[38];
 };
 #pragma pack(pop)
@@ -78,11 +87,11 @@ void GetData(int pipeNum, int packetNum, uint16_t *pAddress, uint8_t *data, uint
             ERR_EXIT("sf error - opening game data - %s\n", fileInName);
         }
 
-        long seekpack = (*pAddress * DATA_SIZE) + PacketMapStruct.HeaderOffset[pipeNum];
+        long seekpack = (*pAddress * PACKET_DATA_LEN) + PacketMapStruct.HeaderOffset[pipeNum];
         if (fseek(dataFile, seekpack, SEEK_SET)) {
             ERR_EXIT("sf error - GetData - on DataSeek - %s\n", fileInName);
         }
-        if (!fread(data, 1, DATA_SIZE, dataFile)) {
+        if (!fread(data, 1, PACKET_DATA_LEN, dataFile)) {
             ERR_EXIT("sf error - getdata - on read\n");
         }
         fclose(dataFile);
@@ -91,7 +100,7 @@ void GetData(int pipeNum, int packetNum, uint16_t *pAddress, uint8_t *data, uint
         *pAddress = 0;
         *rAddress = 0;
         *fileId = 0x3fff;
-        for (int i = 0; i < DATA_SIZE; i += 2) {
+        for (int i = 0; i < PACKET_DATA_LEN; i += 2) {
             data[i] = 0;
             data[i + 1] = 1;
         }
@@ -303,9 +312,9 @@ uint8_t CalcParity(uint8_t *source, int sbitoff, int numbit) {
 }
 
 void LoadFrame(int pipeNum, uint16_t pAddress, uint16_t rAddress, uint16_t fileID, uint8_t *frame, uint8_t *data, uint16_t gameTimeWord, uint8_t serviceID) {
-    uint8_t rData[DATA_SIZE];
+    uint8_t rData[PACKET_DATA_LEN];
 
-    for (int i = 0; i < DATA_SIZE; i++) {
+    for (int i = 0; i < PACKET_DATA_LEN; i++) {
         rData[i] = data[i];
         RevBitsInByte(rData + i, 1, 8);
     }
@@ -315,28 +324,28 @@ void LoadFrame(int pipeNum, uint16_t pAddress, uint16_t rAddress, uint16_t fileI
     uint8_t gameTimeSelect = 0xf - (pAddress & 0xf);
     uint8_t gameTimeBit = (PacketMapStruct.GameTimeWord[pipeNum] & (1 << gameTimeSelect)) >> gameTimeSelect;
     uint8_t gameTimeSync = !gameTimeSelect;
-    OrBits(&gameTimeSync, 1, frame + (pipeNum * 288), bitoff++, 1);
-    OrBits(&gameTimeBit, 1, frame + (pipeNum * 288), bitoff++, 1);
+    OrBits(&gameTimeSync, 1, frame + (pipeNum * PACKET_LEN), bitoff++, 1);
+    OrBits(&gameTimeBit, 1, frame + (pipeNum * PACKET_LEN), bitoff++, 1);
     RevBitsInByte(&serviceID, 1, 7);
-    OrBits(&serviceID, 1, frame + (pipeNum * 288), bitoff, 7);
+    OrBits(&serviceID, 1, frame + (pipeNum * PACKET_LEN), bitoff, 7);
     bitoff += 7;
     RevBitsInWord(&fileID, 1, 14);
-    OrBits((uint8_t *)&fileID, 1, frame + (pipeNum * 288), bitoff, 14);
+    OrBits((uint8_t *)&fileID, 1, frame + (pipeNum * PACKET_LEN), bitoff, 14);
     bitoff += 14;
     pAddress += rAddress;
     RevBitsInWord(&pAddress, 1, 15);
-    OrBits((uint8_t *)&pAddress, 1, frame + (pipeNum * 288), bitoff, 15);
+    OrBits((uint8_t *)&pAddress, 1, frame + (pipeNum * PACKET_LEN), bitoff, 15);
     bitoff += 15;
-    uint16_t headerCRC = CalcCRC(frame + (pipeNum * 288), 28, 40);
+    uint16_t headerCRC = CalcCRC(frame + (pipeNum * PACKET_LEN), 28, 40);
     RevBitsInWord(&headerCRC, 1, 16);
-    OrBits((uint8_t *)&headerCRC, 1, frame + (pipeNum * 288), bitoff, 16);
+    OrBits((uint8_t *)&headerCRC, 1, frame + (pipeNum * PACKET_LEN), bitoff, 16);
     bitoff += 16;
-    OrBits(frame + (pipeNum * 288), 28, frame + (pipeNum * 288) + 10, 4, 56);
+    OrBits(frame + (pipeNum * PACKET_LEN), 28, frame + (pipeNum * PACKET_LEN) + 10, 4, 56);
     bitoff += 56;
 
     // --- data ---
     bitoff = 140;
-    for (int i = 0; i < DATA_SIZE;) {
+    for (int i = 0; i < PACKET_DATA_LEN;) {
         // ???
         if (bitoff == 1153) {
             bitoff += 27;
@@ -345,29 +354,29 @@ void LoadFrame(int pipeNum, uint16_t pAddress, uint16_t rAddress, uint16_t fileI
         uint16_t bch;
         uint8_t parity;
         if (i > 0) {
-            OrBits(rData + i, 1, frame + (pipeNum * 288), bitoff, 208);
-            bch = CalcBCH(frame + (pipeNum * 288), bitoff, 208);
-            parity = CalcParity(frame + (pipeNum * 288), bitoff, 208);
+            OrBits(rData + i, 1, frame + (pipeNum * PACKET_LEN), bitoff, 208);
+            bch = CalcBCH(frame + (pipeNum * PACKET_LEN), bitoff, 208);
+            parity = CalcParity(frame + (pipeNum * PACKET_LEN), bitoff, 208);
             bitoff += 208;
             i += 26;
         }
         else {
-            OrBits(rData, 1, frame + (pipeNum * 288), bitoff, 96);
-            bch = CalcBCH(frame + (pipeNum * 288), 28, 208);
-            parity = CalcParity(frame + (pipeNum * 288), bitoff, 208);
+            OrBits(rData, 1, frame + (pipeNum * PACKET_LEN), bitoff, 96);
+            bch = CalcBCH(frame + (pipeNum * PACKET_LEN), 28, 208);
+            parity = CalcParity(frame + (pipeNum * PACKET_LEN), bitoff, 208);
             bitoff += 96;
             i += 12;
         }
 
         RevBitsInWord(&bch, 1, 16);
-        OrBits((uint8_t *)&bch, 1, frame + (pipeNum * 288), bitoff, 16);
+        OrBits((uint8_t *)&bch, 1, frame + (pipeNum * PACKET_LEN), bitoff, 16);
         bitoff += 16;
-        OrBits(&parity, 1, frame + (pipeNum * 288), bitoff++, 1);
+        OrBits(&parity, 1, frame + (pipeNum * PACKET_LEN), bitoff++, 1);
     }
 }
 
 void InterLeave(int pipeNum, uint8_t *frame) {
-    uint8_t interFrame[288] = { 0 };
+    uint8_t interFrame[PACKET_LEN] = { 0 };
     int packetAoff;
     int packetBoff;
     int packetXoff;
@@ -377,7 +386,7 @@ void InterLeave(int pipeNum, uint8_t *frame) {
     int pc;
     int packet;
 
-    OrBits(frame + (pipeNum * 288), 1, interFrame, 1, 27);
+    OrBits(frame + (pipeNum * PACKET_LEN), 1, interFrame, 1, 27);
     packetAoff = 1;
     packetBoff = 226;
     packetXoff = packetAoff;
@@ -437,7 +446,7 @@ void InterLeave(int pipeNum, uint8_t *frame) {
                 packetXoff += 27;
             }
 
-            OrBits(frame + (pipeNum * 288), packetBits, interFrame, bitCount + packetXoff, 1);
+            OrBits(frame + (pipeNum * PACKET_LEN), packetBits, interFrame, bitCount + packetXoff, 1);
             (*bitPtr)++;
             bitCount++;
             pc++;
@@ -449,8 +458,8 @@ void InterLeave(int pipeNum, uint8_t *frame) {
         packet += 2;
     }
 
-    for (int i = 0; i < 288; i++) {
-        frame[(pipeNum * 288) + i] = interFrame[i];
+    for (int i = 0; i < PACKET_LEN; i++) {
+        frame[(pipeNum * PACKET_LEN) + i] = interFrame[i];
     }
 }
 
@@ -463,13 +472,13 @@ void SaveFrame(uint8_t *frame, char *path, int packetNum, int maxPackets) {
             ERR_EXIT("sf error - creating outfile\n");
         }
     }
-    for (int i = 0; i < 288; i += 2) {
-        for (int pipeNum = 0; pipeNum < 10; pipeNum++) {
-            if (((pipeNum * 288) + i) == 2592) {
+    for (int i = 0; i < PACKET_LEN; i += 2) {
+        for (int pipeNum = 0; pipeNum < NUM_PIPES; pipeNum++) {
+            if (((pipeNum * PACKET_LEN) + i) == 2592) {
                 fprintf(logfile, "\nloaded %d %d @ %x %x\n", pipeNum, i, frame[2592], frame[2593]);
             }
-            fputc(frame[(pipeNum * 288) + i], outfile);
-            fputc(frame[(pipeNum * 288) + i + 1], outfile);
+            fputc(frame[(pipeNum * PACKET_LEN) + i], outfile);
+            fputc(frame[(pipeNum * PACKET_LEN) + i + 1], outfile);
         }
     }
     if (packetNum == maxPackets) {
@@ -478,8 +487,8 @@ void SaveFrame(uint8_t *frame, char *path, int packetNum, int maxPackets) {
 }
 
 int main(int argc, char **argv) {
-    uint8_t frame[2880];
-    uint8_t data[DATA_SIZE];
+    uint8_t frame[PACKET_LEN * NUM_PIPES];
+    uint8_t data[PACKET_DATA_LEN];
     char path[PATH_LEN];
     uint8_t serviceID;
     uint16_t gameTimeWord;
@@ -492,14 +501,12 @@ int main(int argc, char **argv) {
     logfile = fopen("sf.log", "w");
 
     Setup(&maxPackets, &maxFile, path);
+	
     printf("\nFormatting Frame\n");
-
-    // loop per packet
     for (int packetNum = 0; packetNum < maxPackets; packetNum++) {
         printf("%5d\b\b\b\b\b\b", packetNum);
         memset(frame, 0, sizeof(frame));
-        // loop per pipe
-        for (int pipeNum = 0; pipeNum < 10; pipeNum++) {
+        for (int pipeNum = 0; pipeNum < NUM_PIPES; pipeNum++) {
             GetData(pipeNum, packetNum, &pAddress, data, &fileID, &rAddress, &gameTimeWord, &serviceID);
             LoadFrame(pipeNum, pAddress, rAddress, fileID, frame, data, gameTimeWord, serviceID);
             InterLeave(pipeNum, frame);
